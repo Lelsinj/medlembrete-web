@@ -78,6 +78,14 @@ export const Home = () => {
     e.preventDefault();
     if (!currentUser) return; // Checagem de segurança
 
+    const cleanTime = time.trim(); 
+
+    if (cleanTime.length !== 5) {
+      // Opcional: Mostrar um erro para o utilizador
+      console.error("Formato de hora inválido. Use HH:MM");
+      return;
+    }
+
     try {
       // Adiciona um novo "documento" na coleção "medicamentos"
       await addDoc(collection(db, 'medicamentos'), {
