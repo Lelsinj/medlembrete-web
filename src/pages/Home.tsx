@@ -5,6 +5,11 @@ import { auth, db } from '../firebase-config'; // Importe o 'db' (Firestore)
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth'; // Nosso hook de autenticação
 import DeleteIcon from '@mui/icons-material/Delete'; // (Opcional: Ícone de lixeira)
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
+import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
+import { TimePicker } from '@mui/x-date-pickers/TimePicker';
+import dayjs, { Dayjs } from 'dayjs';
+import 'dayjs/locale/pt-br';
 
 // Funções do Firestore que vamos usar
 import { 
@@ -40,7 +45,7 @@ export const Home = () => {
   // Estados para o formulário
   const [medName, setMedName] = useState('');
   const [dosage, setDosage] = useState('');
-  const [time, setTime] = useState('');
+  const [selectedTime, setSelectedTime] = useState<Dayjs | null>(dayjs());
 
   // Estado para guardar a lista de medicamentos
   const [medications, setMedications] = useState<Medication[]>([]);
@@ -76,29 +81,24 @@ export const Home = () => {
   // --- FUNÇÃO PARA ADICIONAR UM NOVO MEDICAMENTO ---
   const handleAddMedication = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!currentUser) return; // Checagem de segurança
-
-    const cleanTime = time.trim(); 
-
-    if (cleanTime.length !== 5) {
-      // Opcional: Mostrar um erro para o utilizador
-      console.error("Formato de hora inválido. Use HH:MM");
-      return;
-    }
+    if (!currentUser || !selectedTime) return; // Validação simples
 
     try {
-      // Adiciona um novo "documento" na coleção "medicamentos"
+      const formattedTime = selectedTime.format('HH:mm');
+
       await addDoc(collection(db, 'medicamentos'), {
-        name: medName,
-        dosage: dosage,
-        time: time,
-        userId: currentUser.uid, // Salva o ID do dono
-        createdAt: Timestamp.now() // Salva a data de criação
+        name: medName.trim(),
+        dosage: dosage.trim(),
+        time: formattedTime, // Salvamos a hora formatada
+        userId: currentUser.uid,
+        createdAt: Timestamp.now()
       });
+      
       // Limpa o formulário
       setMedName('');
       setDosage('');
-      setTime('');
+      setSelectedTime(null); // Reseta o relógio
+      
     } catch (error) {
       console.error("Erro ao adicionar medicamento: ", error);
     }
@@ -163,16 +163,24 @@ export const Home = () => {
             required
             fullWidth
           />
-          <TextField
-            label="Horário (ex: 08:00)"
-            value={time}
-            onChange={(e) => setTime(e.target.value)}
-            required
-            fullWidth
+          <LocalizationProvider dateAdapter={AdapterDayjs} adapterLocale="pt-br">
+          <TimePicker
+            label="Horário"
+            value={selectedTime}
+            onChange={(newValue) => setSelectedTime(newValue)}
+            ampm={false} // Força o formato 24h (importante!)
+            slotProps={{
+              textField: {
+                required: true,
+                fullWidth: true
+              }
+            }}
           />
-          <Button type="submit" variant="contained" sx={{ px: 4 }}>
+        </LocalizationProvider>
+
+        <Button type="submit" variant="contained" sx={{ px: 4 }}>
             Salvar
-          </Button>
+        </Button>
         </Box>
       </Paper>
 
