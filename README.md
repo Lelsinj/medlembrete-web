@@ -47,7 +47,7 @@ Antes de começar, você precisa ter instalado em sua máquina:
 ```git clone [https://github.com/Lelsinj/medlembrete-web.git](https://github.com/Lelsinj/medlembrete-web.git)```
 ```cd medlembrete-web```
 
-2. Instale as dependências
+### 2. Instale as dependências
 Instale tanto as dependências do frontend quanto do backend (functions).
 # Na raiz do projeto
 ```npm install```
@@ -57,7 +57,7 @@ Instale tanto as dependências do frontend quanto do backend (functions).
 ```npm install```
 ```cd ..```
 
-3. Configuração do Firebase
+### 3. Configuração do Firebase
 Crie um projeto no Console do Firebase.
 
 Ative os serviços: Authentication, Firestore e Cloud Messaging.
@@ -72,7 +72,7 @@ Crie um arquivo .env na raiz do projeto seguindo o modelo abaixo:
 ```VITE_FIREBASE_APP_ID="seu-app-id"```
 ```VITE_FIREBASE_VAPID_KEY="sua-chave-publica-vapid-do-cloud-messaging"```
 
-4. Configuração Crítica do Service Worker
+### 4. Configuração Crítica do Service Worker
 O arquivo ```src/firebase-messaging-sw.ts``` utiliza o ```messagingSenderId``` para autenticação. Certifique-se de que ele está lendo corretamente do ```.env``` ou configurado com o ID padrão do manifesto se necessário.
 
 🏃‍♂️ Executando Localmente
