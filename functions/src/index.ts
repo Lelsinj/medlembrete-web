@@ -1,3 +1,4 @@
+// functions/src/index.ts
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as admin from "firebase-admin";
 import { setGlobalOptions } from "firebase-functions/v2";
@@ -11,6 +12,9 @@ admin.initializeApp();
 const db = admin.firestore();
 const messaging = admin.messaging();
 
+/**
+ * Definição do tipo para Medicamento
+ */
 interface Medicamento {
   name: string;
   dosage: string;
@@ -18,11 +22,16 @@ interface Medicamento {
   userId: string;
 }
 
+/**
+ * Definição do tipo para os dados do Utilizador
+ * Atualizado para suportar lista de tokens
+ */
 interface UserData {
-  fcmToken: string;
+  fcmTokens?: string[]; // Novo campo (Lista)
+  fcmToken?: string;    // Campo antigo (String) - mantido para compatibilidade
 }
 
-// --- A NOSSA FUNÇÃO AGENDADA ---
+// --- A NOSSA FUNÇÃO AGENDADA (Sintaxe V2) ---
 export const enviarLembretesDeMedicamentos = onSchedule({ 
   schedule: "every 1 minutes",
   timeZone: "America/Sao_Paulo",
@@ -44,7 +53,6 @@ export const enviarLembretesDeMedicamentos = onSchedule({
 
   if (snapshot.empty) {
     console.log(`[DEBUG] Resultado vazio para '${horaAtual}'.`);
-    // Código de debug de listagem removido para limpar, já sabemos que funciona
     return;
   }
 
@@ -62,36 +70,56 @@ export const enviarLembretesDeMedicamentos = onSchedule({
     }
 
     const userData = userDoc.data() as UserData;
-    const token = userData.fcmToken;
+    
+    // --- LÓGICA DE MÚLTIPLOS DISPOSITIVOS ---
+    // 1. Criar uma lista unificada de tokens
+    let tokens: string[] = [];
 
-    if (!token) {
-      console.warn(`[DEBUG] Utilizador ${medicamento.userId} sem token.`);
+    // Adiciona os tokens da nova lista (se existirem)
+    if (userData.fcmTokens && Array.isArray(userData.fcmTokens)) {
+      tokens = [...userData.fcmTokens];
+    }
+
+    // Adiciona o token antigo (se existir) para não quebrar versões velhas
+    if (userData.fcmToken) {
+      tokens.push(userData.fcmToken);
+    }
+
+    // Remove duplicatas (para não enviar 2x para o mesmo celular)
+    tokens = [...new Set(tokens)];
+
+    if (tokens.length === 0) {
+      console.warn(`[DEBUG] Utilizador ${medicamento.userId} não tem nenhum token cadastrado.`);
       continue;
     }
 
-    // --- MUDANÇA AQUI: USANDO O NOVO FORMATO DE MENSAGEM ---
-    const message = {
-      token: token,
-      notification: {
-        title: "Hora do Remédio! 💊",
-        body: `É hora de tomar o seu ${medicamento.name} (${medicamento.dosage}).`,
-      },
-      // Configuração específica para Web
-      webpush: {
-        notification: {
-          icon: '/favicon.ico'
-        }
-      }
-    };
+    console.log(`[DEBUG] Enviando para ${tokens.length} dispositivo(s) do usuário.`);
 
-    // --- MUDANÇA AQUI: ENVIANDO DIRETAMENTE COM LOG DE ERRO DETALHADO ---
-    try {
-      const response = await messaging.send(message);
-      console.log(`[DEBUG] ✅ Mensagem enviada com sucesso! ID: ${response}`);
-    } catch (error) {
-      console.error(`[DEBUG] ❌ Erro CRÍTICO ao enviar para o token ${token.substring(0, 10)}...`);
-      console.error(error);
-    }
+    // --- ENVIAR PARA CADA TOKEN DA LISTA ---
+    const messagePromises = tokens.map(async (token) => {
+      const message = {
+        token: token,
+        notification: {
+          title: "Hora do Remédio! 💊",
+          body: `É hora de tomar o seu ${medicamento.name} (${medicamento.dosage}).`,
+        },
+        webpush: {
+          notification: { icon: '/favicon.ico' }
+        }
+      };
+
+      try {
+        const response = await messaging.send(message);
+        console.log(`[DEBUG] ✅ Enviado! ID: ${response} | Token final ...${token.slice(-5)}`);
+      } catch (error: any) {
+        // Se o token for inválido (ex: app desinstalado), logamos o erro.
+        // Futuramente podemos adicionar lógica aqui para remover tokens mortos do banco.
+        console.error(`[DEBUG] ❌ Falha ao enviar para ...${token.slice(-5)}:`, error.code);
+      }
+    });
+
+    // Esperar todos os envios deste usuário antes de passar para o próximo
+    await Promise.all(messagePromises);
   }
 
   console.log(`[DEBUG] Processo finalizado.`);

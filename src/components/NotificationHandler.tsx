@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { getMessaging, getToken } from 'firebase/messaging';
-import { doc, setDoc } from 'firebase/firestore';
+import { doc, setDoc, arrayUnion } from 'firebase/firestore';
 import { db } from '../firebase-config';
 import { useAuth } from '../hooks/useAuth';
 
@@ -37,11 +37,11 @@ export const NotificationHandler = () => {
               const userDocRef = doc(db, 'users', currentUser.uid);
               
               await setDoc(userDocRef, {
-                fcmToken: currentToken, 
+                fcmTokens: arrayUnion(currentToken), 
                 email: currentUser.email
               }, { merge: true });
 
-              console.log("Token salvo no Firestore!");
+              console.log("Token adicionado à lista no Firestore!");
 
             } catch (error) {
               console.error("Erro ao salvar o token no Firestore:", error);
