@@ -3,7 +3,7 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as admin from "firebase-admin";
 import { setGlobalOptions } from "firebase-functions/v2";
 
-// Dizendo ao Firebase que estamos rodando em SP
+// Dizendo ao Firebase para correr em SP
 setGlobalOptions({ region: "southamerica-east1" });
 
 // Inicializar o Admin SDK
@@ -12,9 +12,6 @@ admin.initializeApp();
 const db = admin.firestore();
 const messaging = admin.messaging();
 
-/**
- * Definição do tipo para Medicamento
- */
 interface Medicamento {
   name: string;
   dosage: string;
@@ -22,14 +19,23 @@ interface Medicamento {
   userId: string;
 }
 
-/**
- * Definição do tipo para os dados do Utilizador
- * Atualizado para suportar lista de tokens
- */
 interface UserData {
-  fcmTokens?: string[]; // Novo campo (Lista)
-  fcmToken?: string;    // Campo antigo (String) - mantido para compatibilidade
+  fcmTokens?: string[];
+  fcmToken?: string;
 }
+
+// --- FUNÇÃO AUXILIAR PARA CALCULAR A MEIA-NOITE DE HOJE ---
+const getTodayStartTimestamp = (targetTimezone: string) => {
+    // 1. Cria a data atual, mas convertida para a timezone de destino
+    const now = new Date();
+    const today = new Date(now.toLocaleString("en-US", { timeZone: targetTimezone }));
+    
+    // 2. Seta as horas para 00:00:00.000 (meia-noite)
+    today.setHours(0, 0, 0, 0);
+    
+    // 3. Retorna como Timestamp do Firestore
+    return admin.firestore.Timestamp.fromDate(today);
+};
 
 // --- A NOSSA FUNÇÃO AGENDADA (Sintaxe V2) ---
 export const enviarLembretesDeMedicamentos = onSchedule({ 
@@ -37,17 +43,19 @@ export const enviarLembretesDeMedicamentos = onSchedule({
   timeZone: "America/Sao_Paulo",
 }, async (event) => { 
   
-  // --- 1. CALCULAR A HORA ATUAL ---
+  // --- 1. CONFIGURAÇÕES INICIAIS ---
+  const timezone = "America/Sao_Paulo";
+  const todayStartTimestamp = getTodayStartTimestamp(timezone);
+
   const agora = new Date();
-  const spTime = new Date(agora.toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
-  
+  const spTime = new Date(agora.toLocaleString("en-US", { timeZone: timezone }));
   const hora = spTime.getHours().toString().padStart(2, '0');
   const minuto = spTime.getMinutes().toString().padStart(2, '0');
   const horaAtual = `${hora}:${minuto}`;
 
-  console.log(`[DEBUG] A função acordou. Hora calculada: '${horaAtual}'`);
+  console.log(`[DEBUG] A função acordou. Hora calculada: '${horaAtual}'.`);
 
-  // --- 2. PROCURAR NO BANCO ---
+  // --- 2. PROCURAR NO BANCO PELO HORÁRIO ATUAL ---
   const query = db.collection("medicamentos").where("time", "==", horaAtual);
   const snapshot = await query.get();
 
@@ -56,11 +64,24 @@ export const enviarLembretesDeMedicamentos = onSchedule({
     return;
   }
 
-  // --- LOOP PELOS MEDICAMENTOS ENCONTRADOS ---
+  // --- 3. LOOP PELOS MEDICAMENTOS ENCONTRADOS ---
   for (const doc of snapshot.docs) {
     const medicamento = doc.data() as Medicamento;
 
-    // Encontrar o token do utilizador
+    // A. CHECK DE ADESÃO (NOVO!)
+    const historyQuery = db.collection('medicamentos').doc(doc.id).collection('historico')
+        .where('takenAt', '>=', todayStartTimestamp) // Verifica se foi tomado hoje
+        .limit(1);
+
+    const historySnapshot = await historyQuery.get();
+
+    if (!historySnapshot.empty) {
+        // Se encontrarmos um registro em 'historico' para hoje, PULAMOS o alarme.
+        console.log(`[DEBUG] Alarme pulado para ${medicamento.name}: Já marcado como tomado hoje.`);
+        continue; 
+    }
+    
+    // B. BUSCAR TOKEN E ENVIAR
     const userDocRef = db.collection("users").doc(medicamento.userId);
     const userDoc = await userDocRef.get();
 
@@ -70,22 +91,14 @@ export const enviarLembretesDeMedicamentos = onSchedule({
     }
 
     const userData = userDoc.data() as UserData;
-    
-    // --- LÓGICA DE MÚLTIPLOS DISPOSITIVOS ---
-    // 1. Criar uma lista unificada de tokens
     let tokens: string[] = [];
 
-    // Adiciona os tokens da nova lista (se existirem)
     if (userData.fcmTokens && Array.isArray(userData.fcmTokens)) {
       tokens = [...userData.fcmTokens];
     }
-
-    // Adiciona o token antigo (se existir) para não quebrar versões velhas
     if (userData.fcmToken) {
       tokens.push(userData.fcmToken);
     }
-
-    // Remove duplicatas (para não enviar 2x para o mesmo celular)
     tokens = [...new Set(tokens)];
 
     if (tokens.length === 0) {
@@ -93,9 +106,9 @@ export const enviarLembretesDeMedicamentos = onSchedule({
       continue;
     }
 
-    console.log(`[DEBUG] Enviando para ${tokens.length} dispositivo(s) do usuário.`);
+    console.log(`[DEBUG] ✅ Enviando notificação para ${tokens.length} dispositivo(s).`);
 
-    // --- ENVIAR PARA CADA TOKEN DA LISTA ---
+    // Enviar para CADA token da lista
     const messagePromises = tokens.map(async (token) => {
       const message = {
         token: token,
@@ -109,16 +122,13 @@ export const enviarLembretesDeMedicamentos = onSchedule({
       };
 
       try {
-        const response = await messaging.send(message);
-        console.log(`[DEBUG] ✅ Enviado! ID: ${response} | Token final ...${token.slice(-5)}`);
+        await messaging.send(message);
+        console.log(`[DEBUG] ✅ Enviado com sucesso para ...${token.slice(-5)}`);
       } catch (error: any) {
-        // Se o token for inválido (ex: app desinstalado), logamos o erro.
-        // Futuramente podemos adicionar lógica aqui para remover tokens mortos do banco.
         console.error(`[DEBUG] ❌ Falha ao enviar para ...${token.slice(-5)}:`, error.code);
       }
     });
 
-    // Esperar todos os envios deste usuário antes de passar para o próximo
     await Promise.all(messagePromises);
   }
 
