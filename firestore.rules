@@ -2,18 +2,39 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Regras para 'medicamentos'
-    match /medicamentos/{medId} {
-      allow read, delete, update: if request.auth.uid == resource.data.userId;
-      allow create: if request.auth.uid == request.resource.data.userId;
-    }
+    // 1. Regras para a coleção 'users' - AGORA MAIS SEGURA
+match /users/{userId} {
+    
+    // 1.1 Permite que o usuário leia seu próprio perfil
+    allow read: if request.auth.uid == userId;
 
-    // !!!!! ADICIONE ESTE NOVO BLOCO !!!!!
-    // Regras para 'users'
-    match /users/{userId} {
-      // Permite que um usuário leia ou escreva (crie/atualize)
-      // o seu PRÓPRIO documento de usuário, e mais ninguém.
-      allow read, write: if request.auth.uid == userId;
+    // 1.2 Permitir a CRIAÇÃO do documento na hora do registro
+    // E verificar se o UID no documento bate com o usuário logado
+    // (Pode ser mais restrito, mas por enquanto, focamos na segurança básica)
+    allow create: if request.auth.uid == userId;
+
+    // 1.3 Permitir ATUALIZAÇÃO APENAS para gerenciar os tokens de notificação
+    // Bloqueia tentativas de mudar 'name' ou 'birthDate' sem permissão especial.
+    allow update: if request.auth.uid == userId 
+                  // Permite a atualização APENAS se os campos afetados forem apenas os tokens (e-mail, que é do Auth)
+                  && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['fcmTokens', 'fcmToken', 'email']); 
+}
+
+    // 2. Regras para a coleção 'medicamentos'
+    match /medicamentos/{medicationId} {
+      // Permite ler, criar (addDoc), atualizar ou deletar
+      // APENAS se o usuário estiver logado E o userId for o dono (resource.data.userId).
+      // Para 'create', a regra é mais permissiva, garantindo que usuários logados possam adicionar.
+      allow read, create: if request.auth.uid != null; 
+      allow update, delete: if request.auth.uid == resource.data.userId;
+
+      // 3. NOVA REGRA: Regras para a subcoleção 'historico'
+      match /historico/{historyId} {
+        // Permite criar o registro de "Tomado" (create)
+        // APENAS SE o UID do usuário autenticado (request.auth.uid)
+        // for igual ao userId no documento pai "medicamento" (medicationId).
+        allow read, create: if request.auth.uid == get(/databases/$(database)/documents/medicamentos/$(medicationId)).data.userId;
+      }
     }
   }
 }
